@@ -1,1 +1,2 @@
 *.joblib filter=lfs diff=lfs merge=lfs -text
+analyze/app/flow_classifier_with_features.joblib filter=lfs diff=lfs merge=lfs -text
