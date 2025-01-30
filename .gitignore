@@ -111,3 +111,4 @@ Thumbs.db
 *.jar
 *.war
 *.zip
+analyze/app/flow_classifier_with_features.joblib
