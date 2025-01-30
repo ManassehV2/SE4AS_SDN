@@ -1,0 +1,113 @@
+# Byte-compiled / cached files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cython
+*.c
+*.so
+
+# Distribution / Packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+.venv/
+.python-version
+pip-wheel-metadata/
+
+# Pytest
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Logs
+logs/
+*.log
+*.out
+*.err
+*.swp
+*.swo
+
+# VS Code settings
+.vscode/
+.vscode/*
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+.pyre/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Django stuff
+*.sqlite3
+db.sqlite3
+__pypackages__/
+local_settings.py
+
+# Flask stuff
+instance/
+.webassets-cache
+
+# Docker
+**/docker-compose.override.yml
+.dockerignore
+Dockerfile
+Dockerfile.dev
+*.tar
+*.img
+.docker/
+
+# Ignore files from Docker containers
+*.env
+.envrc
+.env.*
+.envrc.*
+
+# Ignore system-generated files
+.DS_Store
+Thumbs.db
+
+# Ignore secrets & security files
+*.pem
+*.key
+*.crt
+*.pfx
+
+# Ignore Editor backups
+*~ 
+*.bak
+*.swp
+*.swo
+
+# Ignore compiled code
+*.o
+*.obj
+*.exe
+*.dll
+*.class
+*.jar
+*.war
+*.zip
