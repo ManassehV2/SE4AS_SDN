@@ -1,5 +1,4 @@
-import os
-import time
+from time import time
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
@@ -15,7 +14,6 @@ from mininet.log import setLogLevel, info
 from mininet.cli import CLI
 import threading
 import requests
-import subprocess
 
 
 
@@ -55,7 +53,6 @@ class MonitorTopology(app_manager.RyuApp):
 
         # Start Mininet topology
         self._start_mininet_topology()
-        self.dos_thread = hub.spawn(self._simulate_dos_attack)
 
         self.logger.info("MonitorTopology app initialized.")
 
@@ -183,55 +180,6 @@ class MonitorTopology(app_manager.RyuApp):
                 for dp in self.datapaths.values():
                     self._request_stats(dp)
             hub.sleep(30)
-    
-    def _simulate_dos_attack(self):
-        """
-        Simulates a DoS attack at specific intervals.
-        - h3 is set up as an HTTP server
-        - h1, h2, and h4 flood h3 using hping3
-        """
-        self.logger.info("Starting DoS attack simulation thread...")
-
-        # Workaround for subprocess.DEVNULL in older Python versions
-        try:
-            DEVNULL = subprocess.DEVNULL  #Python 3.3+
-        except AttributeError:
-            DEVNULL = open(os.devnull, 'wb')  # Fallback for older versions
-
-        while True:
-            try:
-                # **Start HTTP server on h3**
-                self.logger.info("Starting HTTP server on h3...")
-                h3 = self.net.get('h3')  # Ensure h3 exists
-                h3.cmd("python3 -m http.server 80 &")  # Start HTTP server in the background
-
-                # **Wait a few seconds before attack starts**
-                time.sleep(5)
-
-                # **Start DoS attack from h1, h2, h4**
-                self.logger.info("Launching DoS attack from h1, h2, h4...")
-
-                attack_cmds = [
-                    "h1 hping3 --flood --syn -p 80 10.0.0.3 &",
-                    "h2 hping3 --flood --syn -p 80 10.0.0.3 &",
-                ]
-
-                for cmd in attack_cmds:
-                    self.net.get(cmd.split()[0]).cmd(cmd)  # Execute in Mininet hosts
-
-                # **Attack duration (10 seconds)**
-                time.sleep(10)
-
-                # **Stop the attack**
-                self.logger.info("Stopping DoS attack...")
-                for host in ['h1', 'h2', 'h4']:
-                    self.net.get(host).cmd("pkill -f hping3")
-
-                # **Wait before next attack (e.g., 30 seconds)**
-                time.sleep(30)
-
-            except Exception as e:
-                self.logger.error("Error in DoS attack simulation: {}".format(e))
 
     def _request_stats(self, datapath):
         parser = datapath.ofproto_parser

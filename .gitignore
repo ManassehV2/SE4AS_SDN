@@ -74,7 +74,6 @@ instance/
 # Docker
 **/docker-compose.override.yml
 .dockerignore
-Dockerfile
 Dockerfile.dev
 *.tar
 *.img
