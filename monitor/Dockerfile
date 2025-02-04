@@ -2,42 +2,27 @@ FROM osrg/ryu:latest
 
 WORKDIR /app
 
-# Install dependencies, including Mininet
+# Install necessary packages
 RUN apt-get update && apt-get install -y \
     iputils-ping \
     git \
-    openvswitch-switch \
     iproute2 \
     net-tools \
-    python-pip \
-    python-dev \
-    mininet \
+    python3-pip \
     hping3 && \
     apt-get clean
 
-# Clone Ryu repo to restore missing GUI files
-RUN git clone https://github.com/faucetsdn/ryu.git && \
-    cp -r ryu/ryu/app/gui_topology/html /usr/local/lib/python2.7/dist-packages/ryu/app/gui_topology/ && \
-    rm -rf ryu
+# Install Python dependencies
+RUN pip3 install requests
 
-# Copy custom monitor app
+# Copy the custom controller
 COPY . /app
 
-# Install additional Python dependencies
-RUN pip install requests scapy==2.5.0
-
-# Set PYTHONPATH to include /app
+# Set PYTHONPATH
 ENV PYTHONPATH="/app:$PYTHONPATH"
 
 # Expose necessary ports
-EXPOSE 8080 6653
+EXPOSE 6653 8080 5001
 
-# Start Open vSwitch services and Ryu controller
-CMD service openvswitch-switch start && \
-    ryu-manager \
-    ryu.app.ofctl_rest \
-    ryu.app.gui_topology.gui_topology \
-    ryu.app.rest_topology \
-    ryu.app.ws_topology \
-    ryu.topology.switches \
-    monitor_topology
+# Start the Ryu controller with REST API and Monitor Controller
+CMD ["ryu-manager", "ryu.app.ofctl_rest", "/app/monitor_topology.py"]

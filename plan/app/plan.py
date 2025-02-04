@@ -31,61 +31,81 @@ client = InfluxDBClient(
 )
 write_api = client.write_api(write_options=SYNCHRONOUS) 
 
-def fetch_ryu_stats():
+def fetch_ryu_stats(classifications):
     """
-    Fetches flow statistics from the Ryu controller REST API.
-    Returns key aggregated network metrics.
+    Uses received classifications instead of fetching data from `/stats/flow`.
+    Retrieves active switches from `/stats/switches`.
     """
     try:
-        # Get active switches
-        switches_response = requests.get("http://monitor:8080/stats/switches")
-        switches_response.raise_for_status()
-        switches = switches_response.json()  # Example: [1, 2, 3]
+        if not classifications:
+            logger.warning("No classifications available for logging!")
+            return [], 0, {}, {}, {}, 0  # Add 0 for byte_rate
 
-        all_flow_stats = []
-        switch_total_bytes = defaultdict(int)  # Track bytes per switch
-        switch_total_packets = defaultdict(int)  # Track packets per switch
+        all_flow_stats = classifications  # Use received classifications
+        switch_total_bytes = defaultdict(int)
+        switch_total_packets = defaultdict(int)
+        switch_durations = defaultdict(list)
+        total_byte_rate = 0  # Initialize total byte rate
 
-        for switch in switches:
-            flow_response = requests.get(f"http://monitor:8080/stats/flow/{switch}")
-            flow_response.raise_for_status()
-            flow_stats = flow_response.json().get(str(switch), [])
+        # Retrieve active switches from `/stats/switches`
+        try:
+            response = requests.get("http://monitor:8080/stats/switches")
+            response.raise_for_status()
+            active_switches = len(response.json())  # Get the count of active switches
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to fetch active switches: {e}")
+            active_switches = 0
 
-            for flow in flow_stats:
-                all_flow_stats.append(flow)
-                switch_total_bytes[switch] += flow.get("byte_count", 0)
-                switch_total_packets[switch] += flow.get("packet_count", 0)
+        # Aggregate statistics per switch
+        for classification in all_flow_stats:
+            flow = classification.get("flow", {})
+            datapath_id = classification.get("datapath_id")
 
-        return all_flow_stats, switches, switch_total_bytes, switch_total_packets
+            switch_total_bytes[datapath_id] += flow.get("byte_count", 0)
+            switch_total_packets[datapath_id] += flow.get("packet_count", 0)
+            total_byte_rate += flow.get("byte_rate", 0)  # Aggregate byte rate
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch Ryu stats: {e}")
-        return [], [], {}, {}
+            duration = flow.get("duration_sec", 0) + flow.get("duration_nsec", 0) / 1e9
+            switch_durations[datapath_id].append(duration)
 
-def log_network_usage(phase):
+        return all_flow_stats, active_switches, switch_total_bytes, switch_total_packets, switch_durations, total_byte_rate
+
+    except Exception as e:
+        logger.error(f"Failed to process received classifications: {e}")
+        return [], 0, {}, {}, {}, 0
+
+
+def log_network_usage(phase, classifications):
     """
-    Logs the most important network statistics before and after mitigation.
+    Logs network statistics from the received classifications instead of fetching from Ryu.
+    Now includes byte_rate.
     """
-    flow_stats, active_switches, switch_total_bytes, switch_total_packets = fetch_ryu_stats()
+    flow_stats, active_switches, switch_total_bytes, switch_total_packets, switch_durations, total_byte_rate = fetch_ryu_stats(classifications)
 
     if not flow_stats:
         logger.error("No flow stats available for logging!")
         return
 
-    # Aggregate important statistics
-    total_packet_count = sum(flow.get("packet_count", 0) for flow in flow_stats)
-    total_byte_count = sum(flow.get("byte_count", 0) for flow in flow_stats)
+    # Compute other metrics
+    total_packet_count = sum(flow["flow"].get("packet_count", 0) for flow in flow_stats)
+    total_byte_count = sum(flow["flow"].get("byte_count", 0) for flow in flow_stats)
     total_flows = len(flow_stats)
-    avg_packet_rate = sum(flow.get("packet_count", 0) / max(flow.get("duration_sec", 1), 1e-6) for flow in flow_stats) / max(total_flows, 1)
-    max_flow_duration = max(flow.get("duration_sec", 0) for flow in flow_stats) if flow_stats else 0
 
-    # Identify the "Top Talker" switch (highest byte_count)
+    avg_packet_rate = sum(
+        flow["flow"].get("packet_count", 0) / max(flow["flow"].get("duration_sec", 1) + flow["flow"].get("duration_nsec", 0) / 1e9, 1e-6)
+        for flow in flow_stats
+    ) / max(total_flows, 1)
+
+    max_flow_duration = max(
+        (flow["flow"].get("duration_sec", 0) + flow["flow"].get("duration_nsec", 0) / 1e9) for flow in flow_stats
+    ) if flow_stats else 0
+
     top_switch = max(switch_total_bytes, key=switch_total_bytes.get, default=None)
     top_switch_bytes = switch_total_bytes.get(top_switch, 0)
 
     timestamp = datetime.utcnow().isoformat()
 
-    # Create InfluxDB data point
+    # Store metrics to InfluxDB  
     point = Point("network_usage") \
         .tag("phase", phase) \
         .field("total_packet_count", total_packet_count) \
@@ -93,16 +113,16 @@ def log_network_usage(phase):
         .field("total_flows", total_flows) \
         .field("avg_packet_rate", avg_packet_rate) \
         .field("max_flow_duration", max_flow_duration) \
-        .field("num_active_switches", len(active_switches)) \
+        .field("num_active_switches", active_switches) \
         .field("top_switch_id", top_switch if top_switch else -1) \
-        .field("top_switch_bytes", top_switch_bytes)
+        .field("top_switch_bytes", top_switch_bytes) \
+        .field("total_byte_rate", total_byte_rate)  # Add byte_rate field
 
     try:
         write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
-        logger.info(f"Logged network-wide usage ({phase}) from Ryu stats to InfluxDB.")
+        logger.info(f"Logged network-wide usage ({phase}) with total_byte_rate: {total_byte_rate}")
     except Exception as e:
         logger.error(f"Failed to log network-wide stats: {e}")
-
 
 
 @app.route('/plan', methods=['POST'])
@@ -114,7 +134,7 @@ def plan():
         logger.info(f"Received {len(classifications)} classifications for planning.")
 
         # Log optimized network usage BEFORE mitigation
-        log_network_usage("before_mitigation")
+        log_network_usage("before_mitigation", classifications)
 
         for classification in classifications:
             flow = classification["flow"]

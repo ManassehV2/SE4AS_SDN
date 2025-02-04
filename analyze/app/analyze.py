@@ -44,9 +44,6 @@ def classify_flow(prob, T1, T2):
     elif prob > T2:
         return "DDoS"
     else:
-        # Resolve ties in favor of Benign for near-T1 probabilities
-        if abs(prob - T1) < 0.07:  # A small margin
-            return "Benign"
         return "Suspicious"
 
 @app.route('/classify', methods=['POST'])

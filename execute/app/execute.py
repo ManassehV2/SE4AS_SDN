@@ -59,8 +59,8 @@ def send_flow_modification(flow, action):
             "cookie": 0,
             "cookie_mask": 0,
             "table_id": 0,
-            "idle_timeout": 30,
-            "hard_timeout": 60,
+            "idle_timeout": 0,
+            "hard_timeout": 0,
             "priority": priority,
             "match": match,
             "instructions": instructions,
@@ -80,42 +80,48 @@ def send_flow_modification(flow, action):
         logger.error(f"Error in send_flow_modification: {e}")
         return False
 
-def fetch_ryu_stats():
+def fetch_ryu_stats(actions):
     """
-    Fetches flow statistics from the Ryu controller REST API.
-    Returns key aggregated network metrics.
+    Uses received actions from `plan` instead of fetching data from Ryu `/stats/flow`.
+    Excludes DDoS flows from the statistics.
+    Returns key aggregated network metrics, including byte_rate.
     """
     try:
-        # Get active switches
-        switches_response = requests.get("http://monitor:8080/stats/switches")
-        switches_response.raise_for_status()
-        switches = switches_response.json()  # Example: [1, 2, 3]
+        if not actions:
+            logger.warning("No actions available for logging!")
+            return 0, 0, 0, 0  # Add 0 for byte_rate
 
-        all_flow_stats = []
         total_packet_count = 0
         total_byte_count = 0
         total_flows = 0
+        total_byte_rate = 0  # Initialize total byte rate
 
-        for switch in switches:
-            flow_response = requests.get(f"http://monitor:8080/stats/flow/{switch}")
-            flow_response.raise_for_status()
-            flow_stats = flow_response.json().get(str(switch), [])
+        # Aggregate statistics, excluding DDoS flows
+        for action_item in actions:
+            flow = action_item.get("flow", {})
+            category = action_item.get("action")  # This contains "drop" for DDoS
 
-            total_flows += len(flow_stats)
-            total_packet_count += sum(flow.get("packet_count", 0) for flow in flow_stats)
-            total_byte_count += sum(flow.get("byte_count", 0) for flow in flow_stats)
+            if category == "drop" or category == "apply-rate-limit":
+                continue  # Skip logging this flow
 
-        return total_flows, total_packet_count, total_byte_count
+            total_flows += 1
+            total_packet_count += flow.get("packet_count", 0)
+            total_byte_count += flow.get("byte_count", 0)
+            total_byte_rate += flow.get("byte_rate", 0)  # Aggregate byte_rate
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch Ryu stats: {e}")
-        return 0, 0, 0
+        return total_flows, total_packet_count, total_byte_count, total_byte_rate
 
-def log_network_usage_after_mitigation():
+    except Exception as e:
+        logger.error(f"Failed to process received actions: {e}")
+        return 0, 0, 0, 0  # Return default values
+
+
+def log_network_usage_after_mitigation(actions):
     """
     Logs network statistics after mitigation to InfluxDB.
+    Excludes DDoS flows from the statistics.
     """
-    total_flows, total_packet_count, total_byte_count = fetch_ryu_stats()
+    total_flows, total_packet_count, total_byte_count, total_byte_rate = fetch_ryu_stats(actions)
     timestamp = datetime.utcnow().isoformat()
 
     point = Point("network_usage") \
@@ -123,13 +129,15 @@ def log_network_usage_after_mitigation():
         .field("total_flows", total_flows) \
         .field("total_packet_count", total_packet_count) \
         .field("total_byte_count", total_byte_count) \
+        .field("total_byte_rate", total_byte_rate) \
         .time(timestamp, WritePrecision.NS)
 
     try:
         write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
-        logger.info(f"Logged 'after_mitigation' network stats to InfluxDB.")
+        logger.info(f"Logged 'after_mitigation' network stats (excluding DDoS) to InfluxDB, with byte_rate: {total_byte_rate}")
     except Exception as e:
         logger.error(f"Failed to log 'after_mitigation' network stats: {e}")
+
 
 @app.route('/execute', methods=['POST'])
 def execute():
@@ -161,7 +169,7 @@ def execute():
         time.sleep(30)
 
         # Log network stats AFTER mitigation
-        log_network_usage_after_mitigation()
+        log_network_usage_after_mitigation(actions)
 
         return jsonify({"results": results}), 200
 

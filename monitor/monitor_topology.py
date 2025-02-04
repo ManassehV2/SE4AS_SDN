@@ -4,115 +4,36 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet
-from ryu.lib.packet import ethernet, arp, ether_types
+from ryu.lib.packet import packet, ethernet, ether_types
 from ryu.lib import hub
-from mininet.net import Mininet
-from mininet.topo import Topo
-from mininet.node import RemoteController
-from mininet.log import setLogLevel, info
-from mininet.cli import CLI
-import threading
+from ryu.lib.packet import arp  # Import ARP handling
 import requests
+import threading
 
-
-
-class CustomTopo(Topo):
-    """
-    Create a tree topology with a specified depth and fanout.
-    """
-    def build(self, depth=2, fanout=2):
-        self._add_tree(depth, fanout)
-
-    def _add_tree(self, depth, fanout, parent=None):
-        if depth == 0:
-            return
-        switch = self.addSwitch('s{}'.format(len(self.switches()) + 1))
-        if parent:
-            self.addLink(parent, switch)
-
-        for _ in range(fanout):
-            if depth == 1:
-                host = self.addHost('h{}'.format(len(self.hosts()) + 1))
-                self.addLink(switch, host)
-            else:
-                self._add_tree(depth - 1, fanout, switch)
 
 class MonitorTopology(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
 
     def __init__(self, *args, **kwargs):
         super(MonitorTopology, self).__init__(*args, **kwargs)
         self.monitor_url = "http://analyze:5004/classify"
         self.datapaths = {}
         self.datapaths_lock = threading.Lock()
-        self.mac_to_port = {}  # {dpid: {mac: port}}
-        self.arp_table = {}  # {IP: MAC}
-        self.monitor_thread = hub.spawn(self._monitor)
-        self.flow_timestamps = {}
-
-        # Start Mininet topology
-        self._start_mininet_topology()
-
-        self.logger.info("MonitorTopology app initialized.")
-
-
-    def compute_iat(self, flow_id, current_timestamp):
-        if flow_id not in self.flow_timestamps:
-            self.flow_timestamps[flow_id] = []
-
-        timestamps = self.flow_timestamps[flow_id]
-        if timestamps:
-            # Calculate IAT metrics
-            iats = [current_timestamp - ts for ts in timestamps]
-            iat_mean = sum(iats) / len(iats)
-            iat_std = (sum([(x - iat_mean) ** 2 for x in iats]) / len(iats)) ** 0.5
-            iat_max = max(iats)
-            iat_min = min(iats)
-        else:
-            iat_mean, iat_std, iat_max, iat_min = 0, 0, 0, 0
-
-        # Update timestamps
-        self.flow_timestamps[flow_id].append(current_timestamp)
-        return iat_mean, iat_std, iat_max, iat_min
-
-
-    def _start_mininet_topology(self):
-        """
-        Start Mininet topology programmatically.
-        """
-        setLogLevel('info')
-
-        self.logger.info("Starting Mininet topology...")
-        topo = CustomTopo(depth=3, fanout=2)
-        self.net = Mininet(topo=topo, controller=None)
-        self.net.addController('ryu', controller=RemoteController, ip='127.0.0.1', port=6653)
-        self.net.start()
-        self.logger.info("Mininet topology started.")
-
-        # Optionally launch the Mininet CLI
-        # hub.spawn(self._start_cli)
-
-    def _start_cli(self):
-        """
-        Launch the Mininet CLI in a separate thread.
-        """
-        self.logger.info("Launching Mininet CLI...")
-        CLI(self.net)
-        self.logger.info("Mininet CLI terminated.")
+        self.mac_to_port = {}
+        self.arp_table = {}
+        self.monitor_thread = hub.spawn(self._monitor)  # Monitor every 5 seconds
+        self.logger.info("MonitorTopology Controller Initialized with REST API")
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
         with self.datapaths_lock:
             self.datapaths[datapath.id] = datapath
-
         self.logger.info("Switch connected: datapath_id=%s", datapath.id)
-
-        # Install default flow rules
-        self.add_lldp_flow(datapath)  # For link discovery
-        self.add_arp_flow(datapath)  # For host discovery
-        self.add_default_flow(datapath)  # Catch-all flow to forward unmatched packets to the controller
+        self.add_default_flow(datapath)
+        self.add_lldp_flow(datapath)
+        self.add_arp_flow(datapath)
         self.add_broadcast_flow(datapath)
 
     def add_default_flow(self, datapath):
@@ -121,15 +42,13 @@ class MonitorTopology(app_manager.RyuApp):
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, priority=0, match=match, actions=actions)
-        self.logger.info("Default flow added for datapath_id=%s", datapath.id)
 
     def add_lldp_flow(self, datapath):
         parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
-        match = parser.OFPMatch(eth_type=0x88cc)  # Match LLDP packets
+        match = parser.OFPMatch(eth_type=0x88cc)
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, priority=10, match=match, actions=actions)
-        self.logger.info("LLDP flow added for datapath_id=%s", datapath.id)
 
     def add_arp_flow(self, datapath):
         parser = datapath.ofproto_parser
@@ -137,182 +56,176 @@ class MonitorTopology(app_manager.RyuApp):
         match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP)
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, priority=10, match=match, actions=actions)
-        self.logger.info("ARP flow added for datapath_id=%s", datapath.id)
+
+    def add_broadcast_flow(self, datapath):
+        parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+        match = parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff")
+        actions = [parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
+        self.add_flow(datapath, priority=20, match=match, actions=actions)
 
 
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None):
+    def add_flow(self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0):
         parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
         instructions = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
 
-        # Set the flow modification message
-        if buffer_id:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                priority=priority,
-                match=match,
-                instructions=instructions,
-                buffer_id=buffer_id,
-                table_id=0,
-                command=ofproto.OFPFC_ADD,
-                out_group=ofproto.OFPG_ANY,  # Explicitly setting out_group
-                out_port=ofproto.OFPP_ANY,  # Explicitly setting out_port
-            )
-        else:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                priority=priority,
-                match=match,
-                instructions=instructions,
-                table_id=0,
-                command=ofproto.OFPFC_ADD,
-                out_group=ofproto.OFPG_ANY,  # Explicitly setting out_group
-                out_port=ofproto.OFPP_ANY,  # Explicitly setting out_port
-            )
-
+        mod = parser.OFPFlowMod(
+            datapath=datapath, priority=priority, match=match,
+            idle_timeout=idle_timeout, hard_timeout=hard_timeout,
+            instructions=instructions
+        )
         datapath.send_msg(mod)
-        self.logger.info("Flow added: datapath=%s, priority=%s, match=%s", datapath.id, priority, match)
+        self.logger.info("Flow added: {}, priority={}, idle_timeout={}, hard_timeout={}".format(match, priority, idle_timeout, hard_timeout))
 
 
     def _monitor(self):
         while True:
             with self.datapaths_lock:
                 for dp in self.datapaths.values():
+                    self.logger.info("Requesting flow stats from switch {}".format(dp.id))
                     self._request_stats(dp)
-            hub.sleep(30)
+                    # Re-register the switch if missing
+                    if dp.id not in self.datapaths:
+                        self.datapaths[dp.id] = dp
+                        self.logger.info("Re-registering switch {} in self.datapaths".format(dp.id))
+            hub.sleep(5)
+
 
     def _request_stats(self, datapath):
         parser = datapath.ofproto_parser
         req = parser.OFPFlowStatsRequest(datapath)
-        try:
-            datapath.send_msg(req)
-            self.logger.info("Stats requested for datapath_id=%s", datapath.id)
-        except Exception as e:
-            self.logger.error("Failed to request stats from datapath %s: %s", datapath.id, e)
-    
+        self.logger.info("Requesting flow stats from switch {}".format(datapath.id))
+        datapath.send_msg(req)
+
+        # Ensure switch is always tracked
+        if datapath.id not in self.datapaths:
+            self.datapaths[datapath.id] = datapath
+            self.logger.info("Re-added switch {} to self.datapaths".format(datapath.id))
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def flow_stats_reply_handler(self, ev):
+        """ Logs flow statistics, stores them, and sends them to an external analyzer. """
         datapath_id = ev.msg.datapath.id
-        self.logger.info("Flow stats received for datapath_id=%s", datapath_id)
-        flow_stats = []
+
+        self.logger.info("Flow stats received from switch {}".format(datapath_id))
+
+        # Ensure self.flow_stats exists
+        if not hasattr(self, 'flow_stats'):
+            self.flow_stats = {}
+
+        # If the switch is not in self.flow_stats, initialize it
+        if datapath_id not in self.flow_stats:
+            self.flow_stats[datapath_id] = []
+
+        flow_stats = []  # Temporary list to send to the analyzer
 
         for stat in ev.msg.body:
-            flow_id = (datapath_id, stat.match)
+            packet_rate = stat.packet_count / max(stat.duration_sec + stat.duration_nsec / 1e9, 1e-6)
+            byte_rate = stat.byte_count / max(stat.duration_sec + stat.duration_nsec / 1e9, 1e-6)
 
-            # Retrieve packet stats for the flow
-            packet_lengths = self.mac_to_port.get(flow_id, {}).get("packet_lengths", [])
-            iat_values = self.mac_to_port.get(flow_id, {}).get("iat_values", [])
-
-            # Compute metrics
-            packet_length_mean = sum(packet_lengths) / len(packet_lengths) if packet_lengths else 0
-            packet_length_std = (sum([(x - packet_length_mean) ** 2 for x in packet_lengths]) / len(packet_lengths)) ** 0.5 if packet_lengths else 0
-            iat_mean = sum(iat_values) / len(iat_values) if iat_values else 0
-            iat_std = (sum([(x - iat_mean) ** 2 for x in iat_values]) / len(iat_values)) ** 0.5 if iat_values else 0
-            iat_max = max(iat_values) if iat_values else 0
-            iat_min = min(iat_values) if iat_values else 0
-
-            # Append stats
-            flow_stats.append({
+            flow_data = {
                 "datapath_id": datapath_id,
                 "flow_duration": stat.duration_sec + stat.duration_nsec / 1e9,
                 "packet_count": stat.packet_count,
                 "byte_count": stat.byte_count,
-                "packet_rate": stat.packet_count / max(stat.duration_sec + stat.duration_nsec / 1e9, 1e-6),
-                "byte_rate": stat.byte_count / max(stat.duration_sec + stat.duration_nsec / 1e9, 1e-6),
-        })
+                "packet_rate": packet_rate,
+                "byte_rate": byte_rate
+            }
 
+            self.logger.info("Switch {} - Flow: {}".format(datapath_id, flow_data))
+
+            # Store the flow in self.flow_stats
+            self.flow_stats[datapath_id].append(flow_data)
+
+            # Also prepare stats for the external analyzer
+            flow_stats.append(flow_data)
+
+        self.logger.info("Stored {} flows for switch {}".format(len(self.flow_stats[datapath_id]), datapath_id))
+
+        # Send flow stats to the external analyzer
         if flow_stats:
             try:
-                response = requests.post("{}".format(self.monitor_url), json={"flows": flow_stats})
+                response = requests.post(self.monitor_url, json={"flows": flow_stats})
                 response.raise_for_status()
-                self.logger.info("Flow stats successfully sent to Analyzer.")
+                self.logger.info("Flow stats sent to Analyzer: {}".format(self.monitor_url))
             except requests.exceptions.RequestException as e:
-                self.logger.error("Failed to send flow stats to Analyzer:")
+                self.logger.error("Failed to send flow stats to Analyzer: {}".format(e))
+    
 
-           
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def packet_in_handler(self, ev):
+    def _packet_in_handler(self, ev):
         msg = ev.msg
         datapath = msg.datapath
-        parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
-        in_port = msg.match['in_port']
+        parser = datapath.ofproto_parser
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
 
-        # Ignore LLDP packets
-        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            self.logger.info("LLDP packet received: datapath_id=%s, in_port=%s", datapath.id, in_port)
+        if eth is None:
+            self.logger.warning("Received non-Ethernet packet")
             return
 
-        # Handle ARP packets
+        src = eth.src
+        dst = eth.dst
+        dpid = datapath.id
+        in_port = msg.match['in_port']
+
+        self.logger.info("Packet-In: switch={}, in_port={}, src={}, dst={}".format(dpid, in_port, src, dst))
+
+        self.mac_to_port.setdefault(dpid, {})
+
+        # Learn source MAC address
+        self.mac_to_port[dpid][src] = in_port
+
+        # Handle ARP packets explicitly
         arp_pkt = pkt.get_protocol(arp.arp)
         if arp_pkt:
-            self.logger.info("ARP received: src_ip=%s, src_mac=%s, dst_ip=%s",
-                             arp_pkt.src_ip, eth.src, arp_pkt.dst_ip)
+            if arp_pkt.opcode == arp.ARP_REQUEST:
+                self.logger.info("ARP Request from {} for {}".format(src, arp_pkt.dst_ip))
+            elif arp_pkt.opcode == arp.ARP_REPLY:
+                self.logger.info("ARP Reply from {} to {}".format(src, arp_pkt.dst_ip))
 
-            # Learn the source IP and MAC address
-            self.arp_table[arp_pkt.src_ip] = eth.src
+            # Forward ARP replies correctly
+            if dst in self.mac_to_port[dpid]:
+                out_port = self.mac_to_port[dpid][dst]
+                self.logger.info("Forwarding ARP Reply to port {}".format(out_port))
+            else:
+                out_port = ofproto.OFPP_FLOOD
+                self.logger.info("Flooding ARP Packet")
 
-            # Reply to ARP requests
-            if arp_pkt.opcode == arp.ARP_REQUEST and arp_pkt.dst_ip in self.arp_table:
-                self.logger.info("Replying to ARP request for %s", arp_pkt.dst_ip)
-                self._send_arp_reply(datapath, arp_pkt, in_port)
-                return
+            actions = [parser.OFPActionOutput(out_port)]
+            data = msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
 
-        # Flood unknown packets
-        out_port = ofproto.OFPP_FLOOD
+            out = parser.OFPPacketOut(
+                datapath=datapath, buffer_id=msg.buffer_id,
+                in_port=in_port, actions=actions, data=data)
+            datapath.send_msg(out)
+
+            return  # Stop processing here if it's an ARP packet
+
+        # If we know the destination, forward it
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+            self.logger.info("Forwarding packet to port {}".format(out_port))
+        else:
+            out_port = ofproto.OFPP_FLOOD
+            self.logger.info("Flooding unknown destination {}".format(dst))
+
         actions = [parser.OFPActionOutput(out_port)]
-        data = msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                              in_port=in_port, actions=actions, data=data)
+
+        # Install flow for known destinations
+        if out_port != ofproto.OFPP_FLOOD:
+            match = parser.OFPMatch(eth_src=src, eth_dst=dst)
+            self.logger.info("Installing flow: switch={}, match=eth_src:{}, eth_dst:{}, out_port={}".format(dpid, src, dst, out_port))
+            self.add_flow(datapath, priority=10, match=match, actions=actions)
+
+        # Send the packet
+        out = parser.OFPPacketOut(
+            datapath=datapath, buffer_id=msg.buffer_id,
+            in_port=in_port, actions=actions, data=msg.data)
         datapath.send_msg(out)
-        self.logger.info("Flooding packet from port %s on datapath %s", in_port, datapath.id)
 
-
-
-    def _send_arp_reply(self, datapath, arp_request, in_port):
-        parser = datapath.ofproto_parser
-        ofproto = datapath.ofproto
-
-        src_mac = self.arp_table[arp_request.dst_ip]
-        dst_mac = arp_request.src_mac
-        src_ip = arp_request.dst_ip
-        dst_ip = arp_request.src_ip
-
-        # Create ARP reply packet
-        arp_reply = packet.Packet()
-        arp_reply.add_protocol(ethernet.ethernet(
-            ethertype=ether_types.ETH_TYPE_ARP,
-            dst=dst_mac,
-            src=src_mac
-        ))
-        arp_reply.add_protocol(arp.arp(
-            opcode=arp.ARP_REPLY,
-            src_mac=src_mac,
-            src_ip=src_ip,
-            dst_mac=dst_mac,
-            dst_ip=dst_ip
-        ))
-        arp_reply.serialize()
-
-        # Send ARP reply
-        actions = [parser.OFPActionOutput(in_port)]
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=ofproto.OFP_NO_BUFFER,
-                              in_port=ofproto.OFPP_CONTROLLER, actions=actions, data=arp_reply.data)
-        datapath.send_msg(out)
-        self.logger.info("Sent ARP reply to %s for %s", dst_ip, src_ip)
-
-    def add_broadcast_flow(self, datapath):
-        parser = datapath.ofproto_parser
-        ofproto = datapath.ofproto
-        match = parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff")  # Match broadcast MAC address
-        actions = [parser.OFPActionOutput(ofproto.OFPP_FLOOD)]  # Flood the broadcast packet
-        self.add_flow(datapath, priority=20, match=match, actions=actions)
-
-
-
- 
+        self.logger.info("Packet sent: switch={}, out_port={}".format(dpid, out_port))

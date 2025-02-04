@@ -18,7 +18,6 @@ services:
     build:
       context: ./monitor
       dockerfile: Dockerfile
-    privileged: true
     ports:
       - "6653:6653"
       - "8080:8080"
