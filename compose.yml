@@ -1,8 +1,21 @@
 services:
+  mininet:
+    container_name: se4as_sdn-mininet
+    build:
+      context: .
+      dockerfile: mininet.Dockerfile
+    privileged: true
+    volumes:
+      - ./Managedresources:/app
+    tty: true
+
+
   influxdb:
+    container_name: se4as_sdn-influxdb
     image: influxdb:2.7 # Use the latest 2.x version
     ports:
       - 8086:8086
+
     volumes:
       - influxdb_data:/var/lib/influxdb2
     environment:
@@ -14,47 +27,61 @@ services:
       - DOCKER_INFLUXDB_INIT_BUCKET=network_stats
       - INFLUXD_HTTP_AUTH_ENABLED=true
 
+  grafana:
+    container_name: se4as_sdn-grafana
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana:/var/lib/grafana
+
   monitor:
+    container_name: se4as_sdn-monitor
     build:
       context: ./monitor
       dockerfile: Dockerfile
-    ports:
-      - "6653:6653"
-      - "8080:8080"
-    networks:
-      - se4as_network
+    expose:
+      - 6653
+      - 8080
     deploy:
       resources:
         limits:
           memory: "0"
           cpus: "0"
 
+
   execute:
+    container_name: se4as_sdn-execute
     build:
       context: ./execute
       dockerfile: Dockerfile
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5002"]
+      test: ["CMD", "curl", "-f", "http://execute:5002"]
       interval: 30s
       timeout: 10s
       retries: 3
     depends_on:
       - influxdb
-    ports:
-      - "5002:5002"
-    networks:
-      - se4as_network
+    expose:
+      - 5002
+
 
   plan:
+    container_name: se4as_sdn-plan
     build:
       context: ./plan
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001"]
+      test: ["CMD", "curl", "-f", "http://plan:5001"]
       interval: 30s
       timeout: 10s
       retries: 3
-    ports:
-      - "5001:5001"
+    expose:
+      - 5001
+
     environment:
       - INFLUXDB_HOST=influxdb
       - INFLUXDB_PORT=8086
@@ -62,32 +89,18 @@ services:
       - INFLUXDB_ORG=my-org
       - INFLUXDB_USERNAME=admin
       - INFLUXDB_PASSWORD=admin123
-    networks:
-      - se4as_network
 
   analyze:
+    container_name: se4as_sdn-analyze
     build:
       context: ./analyze
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5004"]
+      test: ["CMD", "curl", "-f", "http://analyze:5004"]
       interval: 30s
       timeout: 10s
       retries: 3
-    ports:
-      - "5004:5004"
-    networks:
-      - se4as_network
+    expose:
+      - 5004
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - ./grafana:/var/lib/grafana
-      
 volumes:
   influxdb_data:
