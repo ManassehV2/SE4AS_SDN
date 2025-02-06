@@ -122,7 +122,12 @@ def log_network_usage_after_mitigation(actions):
     Excludes DDoS flows from the statistics.
     """
     total_flows, total_packet_count, total_byte_count, total_byte_rate = fetch_ryu_stats(actions)
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now().isoformat()
+    avg_packet_rate = sum(
+        flow["flow"].get("packet_count", 0) / max(flow["flow"].get("duration_sec", 1) 
+        + flow["flow"].get("duration_nsec", 0) / 1e9, 1e-6)
+        for flow in actions
+    ) / max(total_flows, 1)
 
     point = Point("network_usage") \
         .tag("phase", "after_mitigation") \
@@ -130,6 +135,7 @@ def log_network_usage_after_mitigation(actions):
         .field("total_packet_count", total_packet_count) \
         .field("total_byte_count", total_byte_count) \
         .field("total_byte_rate", total_byte_rate) \
+        .field("avg_packet_rate", avg_packet_rate) \
         .time(timestamp, WritePrecision.NS)
 
     try:
