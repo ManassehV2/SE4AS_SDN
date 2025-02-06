@@ -1,21 +1,13 @@
 services:
   mininet:
-    container_name: se4as_sdn-mininet
-    build:
-      context: .
-      dockerfile: mininet.Dockerfile
+    build: ./mininet
     privileged: true
-    volumes:
-      - ./Managedresources:/app
     tty: true
 
-
   influxdb:
-    container_name: se4as_sdn-influxdb
     image: influxdb:2.7 # Use the latest 2.x version
     ports:
       - 8086:8086
-
     volumes:
       - influxdb_data:/var/lib/influxdb2
     environment:
@@ -28,11 +20,9 @@ services:
       - INFLUXD_HTTP_AUTH_ENABLED=true
 
   grafana:
-    container_name: se4as_sdn-grafana
     image: grafana/grafana:latest
     ports:
       - 3000:3000
-
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -40,10 +30,7 @@ services:
       - ./grafana:/var/lib/grafana
 
   monitor:
-    container_name: se4as_sdn-monitor
-    build:
-      context: ./monitor
-      dockerfile: Dockerfile
+    build: ./monitor
     expose:
       - 6653
       - 8080
@@ -53,12 +40,8 @@ services:
           memory: "0"
           cpus: "0"
 
-
   execute:
-    container_name: se4as_sdn-execute
-    build:
-      context: ./execute
-      dockerfile: Dockerfile
+    build: ./execute
     healthcheck:
       test: ["CMD", "curl", "-f", "http://execute:5002"]
       interval: 30s
@@ -69,11 +52,8 @@ services:
     expose:
       - 5002
 
-
   plan:
-    container_name: se4as_sdn-plan
-    build:
-      context: ./plan
+    build: ./plan
     healthcheck:
       test: ["CMD", "curl", "-f", "http://plan:5001"]
       interval: 30s
@@ -91,9 +71,7 @@ services:
       - INFLUXDB_PASSWORD=admin123
 
   analyze:
-    container_name: se4as_sdn-analyze
-    build:
-      context: ./analyze
+    build: ./analyze
     healthcheck:
       test: ["CMD", "curl", "-f", "http://analyze:5004"]
       interval: 30s
