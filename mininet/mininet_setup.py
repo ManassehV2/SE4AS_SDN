@@ -25,15 +25,15 @@ class CustomTreeTopo(Topo):
     
     Creates a hierarchical tree network topology with configurable depth and fanout.
     Each level consists of switches, with hosts connected to the leaf switches.
-    This topology is suitable for simulating various network scenarios including DDoS attacks.
+    This topology is suitable for simulating DDoS attacks.
     """
 
-    def build(self, depth=4, fanout=2):
+    def build(self, depth=3, fanout=4):
         """Build the tree topology with specified depth and fanout.
         
         Args:
-            depth (int): Number of levels in the tree (default: 4)
-            fanout (int): Number of child switches per parent (default: 2)
+            depth (int): Number of levels in the tree (default: 3)
+            fanout (int): Number of child switches per parent (default: 4)
         """
         # Start the recursive tree creation from the root
         self.create_tree(depth, fanout)
@@ -45,83 +45,66 @@ class CustomTreeTopo(Topo):
             depth (int): Current depth level in the tree
             fanout (int): Number of children per node
             parent (str): Parent switch name (None for root)
-            
-        The function creates switches at each level and connects hosts
-        to the leaf switches when depth reaches 0.
         """
         # Base case: reached leaf level
         if depth == 0:
             return
 
-        # Create a new switch with an incrementing ID
-        # The ID is based on the current number of switches + 1
+        # Create a new switch
         switch_id = len(self.switches()) + 1
-        switch = self.addSwitch('s{}'.format(switch_id))  # Format: s1, s2, s3, etc.
+        switch = self.addSwitch(f's{switch_id}')
 
-        # If this switch has a parent (not the root), create a link to it
-        # This builds the hierarchical structure of the tree
+        # Connect to parent if not root
         if parent:
-            self.addLink(parent, switch)  # Creates a bidirectional link
+            self.addLink(parent, switch)
 
+        # Add child nodes
         for _ in range(fanout):
             if depth == 1:
-                # Create and link host
+                # Create and link host at leaf level
                 host_id = len(self.hosts()) + 1
-                host = self.addHost('h{}'.format(host_id))
+                host = self.addHost(f'h{host_id}')
                 self.addLink(switch, host)
             else:
+                # Create subtree
                 self.create_tree(depth - 1, fanout, switch)
 
 
 def configure_switches(net):
-    """Configure OpenFlow switches in the network.
-    
-    Args:
-        net (Mininet): The Mininet network instance.
-        
-    Applies specific configurations to the OpenFlow switches:
-    - Sets OpenFlow protocol versions
-    - Configures flow table sizes
-    - Enables necessary OpenFlow features
-    """
-    info("*** Configuring OVS switches...\n")
-
+    """Configure OpenFlow switches for the simulation."""
+    info("*** Configuring switches...\n")
     for switch in net.switches:
-        switch.cmd("ovs-vsctl set bridge {} protocols=OpenFlow13".format(switch))
-        switch.cmd("ovs-vsctl set-fail-mode {} secure".format(switch))
-        info("Configured {}\n".format(switch))
+        # Set OpenFlow 1.3
+        switch.cmd(f"ovs-vsctl set bridge {switch} protocols=OpenFlow13")
 
 
 def generate_traffic(net):
-    """Generate network traffic to simulate normal and attack scenarios.
+    """Generate DDoS attack traffic in the tree topology.
     
-    Args:
-        net (Mininet): The Mininet network instance.
-        
-    Simulates:
-    - Normal background traffic between hosts
-    - Potential DDoS attack traffic patterns
-    - Various network conditions for testing
+    The last host will be the target, and all other hosts will be attackers.
+    Each attacker will generate multiple types of attack traffic.
     """
-    info("*** Generating DDoS traffic\n")
-
-    h1 = net.get('h1')
-    h2 = net.get('h2')
-    h3 = net.get('h3')
-
-    # Start a simple HTTP server on h3
-    h3.cmd("python3 -m http.server 80 &")
-
-    # Start a flood ping from h1 to h3
-    h1.cmd("ping 10.0.0.3 -f &")
-
-    # Start a flood ping from h2 to h3
-    h2.cmd("ping 10.0.0.3 -f &")
-
-    # Start a SYN flood attack from h2 to h3 on port 80
-    h2.cmd("hping3 --flood --syn -p 80 10.0.0.3 &")
-
-    info("*** Traffic generation started!\n")
+    info("*** Starting DDoS attack simulation\n")
+    
+    # Get all hosts
+    hosts = net.hosts
+    target = hosts[-1]  # Last host is the target
+    attackers = hosts[:-1]  # All other hosts are attackers
+    
+    # Start HTTP server on target
+    target.cmd("python3 -m http.server 80 &")
+    info(f"*** Started HTTP server on target {target.name}\n")
+    
+    # Start attacks from all attackers
+    info(f"*** Starting attacks from {len(attackers)} hosts\n")
+    for attacker in attackers:
+        # Launch multiple attack types from each attacker
+        attacker.cmd(f"hping3 --flood --syn -p 80 {target.IP()} &")  # SYN flood
+        attacker.cmd(f"ping {target.IP()} -f &")  # ICMP flood
+        attacker.cmd(f"while true; do wget http://{target.IP()}:80 -O /dev/null; done &")  # HTTP flood
+        info(f"*** Started attacks from {attacker.name}\n")
+    
+    info(f"*** DDoS attack traffic started from {len(attackers)} hosts to {target.name}\n")
 
 
 def run_network(controller_ip):
