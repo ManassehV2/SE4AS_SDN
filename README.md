@@ -258,6 +258,57 @@ The Grafana dashboard is organized into three main views for comprehensive monit
    docker logs se4as_execute | grep "Logged network stats"
    ```
 
+4. **Open vSwitch Kernel Module Error on Windows**
+
+   The following error while running Docker on Windows (Check logs for mininet service in Docker):
+
+   ```
+   Generic Netlink family 'ovs_datapath' does not exist. The Open vSwitch kernel module is probably not loaded.
+   ```
+
+   #### ❌ Why This Happens on Windows?
+   Unlike Linux, Windows does not allow loading Linux kernel modules (such as Open vSwitch). This is because Open vSwitch depends on netlink and kernel modules, which do not exist in Windows or WSL2's lightweight VM.
+
+   #### ✅ Solution:
+   To run Open vSwitch on Windows, you must use a full Linux virtual machine (VM).
+
+   ### How to install Mininet on a VM
+
+   1. Download & Install [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
+   
+   2. Download Mininet prebuilt image from [mininet release](https://github.com/mininet/mininet/releases/download/2.3.0/mininet-2.3.0-210211-ubuntu-20.04.1-legacy-server-amd64-ovf.zip).  
+
+   3. Extract and double click on `mininet-xxx-xxx.ovf` for an instant setup for Mininet VM on VirtualBox.
+
+   4. Before starting the VM, you need to enable network adapter attached to `Bridged Adapter` and set name to `en0: WiFi` as illustrate in this figure. ![Network Adapter](/images/Mininet_VM_Network_Adaptor.png)
+
+   5. After launching Mininet-VM, you will have to be prompted to enter username: `mininet` and password: `mininet`. Then you have to check the local IP Address of the VM by using `ifconfig` command. You will then see the local IP Address under `en0` as we setup above (You need this for the host to access).
+
+   6. In your local machine (host), you can now run command
+
+      ```bash
+      ssh mininet@VM_IP_ADDRESS
+      ```
+
+      Then you can copy content of `mininet_setup.py` from this repo to the Mininet-VM via command: 
+      
+      ```bash
+      scp mininet/mininet_setup.py mininet@VM_IP_ADDRESS:/NFSHOME/
+      ```
+
+      Or simply create new file `mininet_setup.py` by copy and paste directly using `Vim` or `Nano` editor. 
+
+   7. Next, before runing the python script, you should make sure that all Docker Containers without the Mininet are running:
+
+      ```bash
+      sudo python mininet_setup.py --controller-ip=HOST_IP_ADDRESS
+      ```
+
+      To find host IP Address, similar to step 5.
+
+
+
+
 ## Configuration
 
 ### Environment Variables
@@ -281,38 +332,6 @@ services:
     mem_limit: 256M
   execute:
     mem_limit: 256M
-```
-
-## Project Structure
-```
-SE4AS_SDN/
-├── monitor/
-│   ├── app/
-│   │   ├── flow_monitor.py    # Flow statistics collection
-│   │   └── simple_controller.py
-│   └── Dockerfile
-├── analyze/
-│   ├── app/
-│   │   └── analyze.py         # Traffic classification
-│   └── Dockerfile
-├── plan/
-│   ├── app/
-│   │   └── plan.py           # Mitigation planning
-│   └── Dockerfile
-├── execute/
-│   ├── app/
-│   │   └── execute.py        # Action implementation
-│   └── Dockerfile
-├── docker-compose.yml        # Service orchestration
-└── README.md
-```
-
-## Networks
-All services communicate through the `se4as_network` Docker network:
-```yaml
-networks:
-  se4as_network:
-    driver: bridge
 ```
 
 ## Contributing
