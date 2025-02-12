@@ -106,11 +106,6 @@ class FlowMonitor(SimpleController):
                 "byte_rate": byte_rate
             }
             
-            # Log suspicious flow rates
-            if packet_rate > 1000 or byte_rate > 1000000:  # Adjust thresholds as needed
-                self.logger.warning(f"High traffic flow detected on switch {datapath_id}:\n"
-                                  f"Packet Rate: {packet_rate:.2f} pps\n"
-                                  f"Byte Rate: {byte_rate:.2f} Bps")
             
             flow_stats.append(flow_data)
         
