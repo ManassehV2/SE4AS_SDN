@@ -274,6 +274,41 @@ The Grafana dashboard is organized into three main views for comprehensive monit
 
    ### How to install Mininet on a VM
 
+   1. Download & Install [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
+   
+   2. Download Mininet prebuilt image from [mininet release](https://github.com/mininet/mininet/releases/download/2.3.0/mininet-2.3.0-210211-ubuntu-20.04.1-legacy-server-amd64-ovf.zip).  
+
+   3. Extract and double click on `mininet-xxx-xxx.ovf` for an instant setup for Mininet VM on VirtualBox.
+
+   4. Before starting the VM, you need to enable network adapter attached to `Bridged Adapter` and set name to `en0: WiFi` as illustrate in this figure. ![Network Adapter](/images/Mininet_VM_Network_Adaptor.png)
+
+   5. After launching Mininet-VM, you will have to be prompted to enter username: `mininet` and password: `mininet`. Then you have to check the local IP Address of the VM by using `ifconfig` command. You will then see the local IP Address under `en0` as we setup above (You need this for the host to access).
+
+   6. In your local machine (host), you can now run command
+
+      ```bash
+      ssh mininet@VM_IP_ADDRESS
+      ```
+
+      Then you can copy content of `mininet_setup.py` from this repo to the Mininet-VM via command: 
+      
+      ```bash
+      scp mininet/mininet_setup.py mininet@VM_IP_ADDRESS:/NFSHOME/
+      ```
+
+      Or simply create new file `mininet_setup.py` by copy and paste directly using `Vim` or `Nano` editor. 
+
+   7. Next, before runing the python script, you should make sure that all Docker Containers without the Mininet are running:
+
+      ```bash
+      sudo python mininet_setup.py --controller-ip=HOST_IP_ADDRESS
+      ```
+
+      To find host IP Address, similar to step 5.
+
+
+
+
 ## Configuration
 
 ### Environment Variables
