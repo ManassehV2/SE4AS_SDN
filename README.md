@@ -10,13 +10,51 @@ This project implements a Self-Adaptive Software-Defined Network (SDN) controlle
 
 The system implements a complete MAPE-K feedback loop for network management with the following components:
 
-1. **Mininet**: Network emulation environment
-2. **RYU SDN Controller**: OpenFlow controller for network management
-3. **Analyzer**: Flow classification using machine learning
-4. **Planner**: Determines mitigation strategies
-5. **Executor**: Implements network changes
-6. **InfluxDB**: Knowledge base for metrics storage
-7. **Grafana**: Visualization and monitoring
+1. **Mininet with OpenFlow**
+    * Network emulation environment
+    * Managed resources using OpenFlow protocol
+    * Simulates network topology and traffic
+
+2. **RYU SDN Controller with Monitor**
+    * OpenFlow controller for network management
+    * Collects real-time flow statistics
+    * Interfaces between network and analysis components
+
+3. **Analyzer with ML Model**
+    * Flow classification using machine learning
+    * Adaptive threshold calculation
+    * Three-tier classification:
+        - Benign: Normal traffic
+        - Suspicious: Potentially harmful
+        - DDoS: Confirmed attack traffic
+    * Real-time flow categorization logging
+
+4. **Planner**
+    * Determines mitigation strategies based on flow categories:
+        - set-priority for benign flows
+        - apply-rate-limit for suspicious flows
+        - drop for DDoS flows
+    * Coordinates with executor for action implementation
+
+5. **Executor**
+    * Implements network changes through Ryu
+    * Calculates effectiveness metrics
+    * Logs mitigation statistics
+
+6. **InfluxDB (Knowledge Base)**
+    * Time-series database for metrics storage
+    * Stores:
+        - Flow categories and distributions
+        - Network traffic statistics
+        - Mitigation effectiveness metrics
+        - Bandwidth utilization data
+
+7. **Grafana (Visualization)**
+    * Three specialized dashboards:
+        - Flow Analysis: counts and packet rates
+        - Mitigation Metrics: effectiveness and savings
+        - Traffic Analysis: detailed flow breakdown
+    * Real-time monitoring and historical analysis
 
 ### System Workflow
 
@@ -47,29 +85,48 @@ The sequence diagram shows the detailed workflow of the system:
 
 ### Dashboard Visualization
 
-![Dashboard](images/Dashboard.png)
+![Dashboard](images/Dashboard-1.png)
+![Dashboard](images/Dashboard-2.png)
+![Dashboard](images/Dashboard-3.png)
 
-The Grafana dashboard provides real-time monitoring of:
+The Grafana dashboard is organized into three main views for comprehensive monitoring:
 
+### Dashboard 1: Flow Analysis
+1. **Flow Count by Type**:
+   - Bar chart comparing normal vs mitigated flows
+   - Real-time view of flow distribution
+
+2. **Packet Rate Comparison**:
+   - Line graph showing packet rates over time
+   - Separate lines for normal and mitigated traffic
+   - Measured in kp/s (kilopackets per second)
+
+### Dashboard 2: Mitigation Metrics
 1. **Mitigation Effectiveness Overview**:
-   - Mitigation Ratio: 78.6% of flows being mitigated
-   - Traffic Reduction: 14.6% reduction in malicious traffic
+   - Mitigation Ratio: Percentage of flows being mitigated (54.2%)
+   - Traffic Reduction: Percentage of reduced malicious traffic (13.7%)
+
+2. **Bandwidth Savings Over Time**:
+   - Line graph showing bandwidth saved through mitigation
+   - Measured in bytes per second
+
+3. **Recent Flows**:
+   - Real-time flow tracking
+   - Color-coded lines for benign, suspicious, and DDoS flows
+
+### Dashboard 3: Detailed Traffic Analysis
+1. **Mean of Flows**:
+   - Average flow rates for each traffic type
+   - Separate tracking for benign, suspicious, and DDoS flows
 
 2. **Network Traffic Distribution**:
-   - Real-time comparison of normal vs mitigated traffic
-   - Line graph showing traffic patterns over time
+   - Byte rate comparison between normal and mitigated traffic
+   - Measured in B/s (Bytes per second)
 
-3. **Bandwidth Savings Over Time**:
-   - Tracks network resources preserved through mitigation
-   - Historical view of mitigation effectiveness
-
-4. **Flow Count by Type**:
-   - Bar chart comparing normal vs mitigated flows
-   - Quick visualization of traffic composition
-
-5. **Packet Rate Comparison**:
-   - Detailed view of packet rates for both traffic types
-   - Helps identify attack patterns and normal behavior
+3. **Flow Type Breakdown**:
+   - Individual graphs for DDoS, Suspicious, and Benign flows
+   - Historical view of each flow type's behavior
+   - Helps identify patterns and trends
 
 ### Key Features
 
@@ -161,13 +218,7 @@ The Grafana dashboard provides real-time monitoring of:
 1. **Traffic Overview Panel**
    - Real-time traffic distribution
    - Normal vs. Mitigated flows
-   - Query:
-     ```flux
-     from(bucket: "network_stats")
-       |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-       |> filter(fn: (r) => r["_measurement"] == "network_usage")
-       |> filter(fn: (r) => r["_field"] == "byte_rate")
-     ```
+   
 
 2. **Mitigation Effectiveness**
    - Traffic reduction ratio
