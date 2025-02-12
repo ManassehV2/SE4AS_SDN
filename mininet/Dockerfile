@@ -33,7 +33,9 @@ COPY mininet_setup.py /app/
 # Copy and configure Open vSwitch initialization script
 # This script starts OpenVSwitch services and creates initial bridge
 COPY init.sh /init.sh
-RUN chmod +x /init.sh
+RUN chmod +x /init.sh && \
+    sed -i 's/\r$//' /init.sh
+
 
 # Use init.sh as entrypoint to ensure OpenVSwitch is properly initialized
 ENTRYPOINT ["/init.sh"]
