@@ -36,3 +36,29 @@ ovs-vsctl --may-exist add-br br0
 # Execute the command passed to docker run
 # This will typically be the Mininet setup script
 exec "$@"
+wait_for_service "ovsdb" 30 "ovs-vsctl show >/dev/null 2>&1"
+
+# Initialize OpenVSwitch
+echo "Initializing OpenVSwitch..."
+ovs-vsctl --no-wait init
+
+# Start the OpenVSwitch daemon
+echo "Starting OpenVSwitch daemon..."
+ovs-vswitchd --pidfile --detach
+
+# Wait for the switch daemon to be ready
+wait_for_service "ovs-vswitchd" 30 "ovs-vsctl show | grep -q ovs_version"
+
+# Configure networking for WSL2
+echo "Configuring WSL2 networking..."
+service openvswitch-switch start || true
+
+# Create the default bridge for OpenVSwitch
+echo "Creating default bridge..."
+ovs-vsctl --may-exist add-br br0
+
+# Set bridge protocols for better compatibility
+ovs-vsctl set bridge br0 protocols=OpenFlow13
+
+# Execute the command passed to docker run
+exec "$@"

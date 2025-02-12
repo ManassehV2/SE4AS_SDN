@@ -82,67 +82,111 @@ def send_flow_modification(flow, action):
 
 def fetch_ryu_stats(actions):
     """
-    Uses received actions from `plan` instead of fetching data from Ryu `/stats/flow`.
-    Excludes DDoS flows from the statistics.
-    Returns key aggregated network metrics, including byte_rate.
+    Uses received actions from `plan` to calculate network statistics.
+    Separates normal and mitigated flows for better analysis.
+    Returns metrics for both normal and mitigated flows.
     """
     try:
         if not actions:
             logger.warning("No actions available for logging!")
-            return 0, 0, 0, 0  # Add 0 for byte_rate
+            return {
+                'normal': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0},
+                'mitigated': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0}
+            }
 
-        total_packet_count = 0
-        total_byte_count = 0
-        total_flows = 0
-        total_byte_rate = 0  # Initialize total byte rate
+        stats = {
+            'normal': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0},
+            'mitigated': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0}
+        }
 
-        # Aggregate statistics, excluding DDoS flows
         for action_item in actions:
             flow = action_item.get("flow", {})
-            category = action_item.get("action")  # This contains "drop" for DDoS
+            action = action_item.get("action")
+            
+            # Categorize flow based on action
+            category = 'mitigated' if action in ["drop", "apply-rate-limit"] else 'normal'
+            
+            stats[category]['flows'] += 1
+            stats[category]['packets'] += flow.get("packet_count", 0)
+            stats[category]['bytes'] += flow.get("byte_count", 0)
+            stats[category]['byte_rate'] += flow.get("byte_rate", 0)
 
-            if category == "drop" or category == "apply-rate-limit":
-                continue  # Skip logging this flow
-
-            total_flows += 1
-            total_packet_count += flow.get("packet_count", 0)
-            total_byte_count += flow.get("byte_count", 0)
-            total_byte_rate += flow.get("byte_rate", 0)  # Aggregate byte_rate
-
-        return total_flows, total_packet_count, total_byte_count, total_byte_rate
+        return stats
 
     except Exception as e:
         logger.error(f"Failed to process received actions: {e}")
-        return 0, 0, 0, 0  # Return default values
+        return {
+            'normal': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0},
+            'mitigated': {'flows': 0, 'packets': 0, 'bytes': 0, 'byte_rate': 0}
+        }
 
+
+def calculate_mitigation_metrics(stats):
+    """
+    Calculate additional metrics to measure mitigation effectiveness.
+    """
+    total_flows = stats['normal']['flows'] + stats['mitigated']['flows']
+    if total_flows == 0:
+        return {
+            'mitigation_ratio': 0,
+            'traffic_reduction': 0,
+            'bandwidth_savings': 0
+        }
+
+    metrics = {
+        'mitigation_ratio': stats['mitigated']['flows'] / total_flows,
+        'traffic_reduction': (
+            1 - (stats['normal']['byte_rate'] / (stats['normal']['byte_rate'] + stats['mitigated']['byte_rate']))
+            if (stats['normal']['byte_rate'] + stats['mitigated']['byte_rate']) > 0 else 0
+        ),
+        'bandwidth_savings': stats['mitigated']['byte_rate']  # Bytes/sec prevented from flowing
+    }
+    return metrics
 
 def log_network_usage_after_mitigation(actions):
     """
-    Logs network statistics after mitigation to InfluxDB.
-    Excludes DDoS flows from the statistics.
+    Logs detailed network statistics after mitigation to InfluxDB.
+    Tracks both normal and mitigated flows separately.
     """
-    total_flows, total_packet_count, total_byte_count, total_byte_rate = fetch_ryu_stats(actions)
+    stats = fetch_ryu_stats(actions)
     timestamp = datetime.now().isoformat()
-    avg_packet_rate = sum(
-        flow["flow"].get("packet_count", 0) / max(flow["flow"].get("duration_sec", 1) 
-        + flow["flow"].get("duration_nsec", 0) / 1e9, 1e-6)
-        for flow in actions
-    ) / max(total_flows, 1)
-
-    point = Point("network_usage") \
+    
+    # Calculate mitigation effectiveness metrics
+    effectiveness = calculate_mitigation_metrics(stats)
+    
+    # Log normal traffic stats
+    normal_point = Point("network_usage") \
         .tag("phase", "after_mitigation") \
-        .field("total_flows", total_flows) \
-        .field("total_packet_count", total_packet_count) \
-        .field("total_byte_count", total_byte_count) \
-        .field("total_byte_rate", total_byte_rate) \
-        .field("avg_packet_rate", avg_packet_rate) \
+        .tag("traffic_type", "normal") \
+        .field("flows", stats['normal']['flows']) \
+        .field("packet_count", stats['normal']['packets']) \
+        .field("byte_count", stats['normal']['bytes']) \
+        .field("byte_rate", stats['normal']['byte_rate']) \
+        .time(timestamp, WritePrecision.NS)
+
+    # Log mitigated traffic stats
+    mitigated_point = Point("network_usage") \
+        .tag("phase", "after_mitigation") \
+        .tag("traffic_type", "mitigated") \
+        .field("flows", stats['mitigated']['flows']) \
+        .field("packet_count", stats['mitigated']['packets']) \
+        .field("byte_count", stats['mitigated']['bytes']) \
+        .field("byte_rate", stats['mitigated']['byte_rate']) \
+        .time(timestamp, WritePrecision.NS)
+
+    # Log mitigation effectiveness metrics
+    effectiveness_point = Point("mitigation_effectiveness") \
+        .field("mitigation_ratio", effectiveness['mitigation_ratio']) \
+        .field("traffic_reduction", effectiveness['traffic_reduction']) \
+        .field("bandwidth_savings", effectiveness['bandwidth_savings']) \
         .time(timestamp, WritePrecision.NS)
 
     try:
-        write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
-        logger.info(f"Logged 'after_mitigation' network stats (excluding DDoS) to InfluxDB, with byte_rate: {total_byte_rate}")
+        write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=[normal_point, mitigated_point, effectiveness_point])
+        logger.info(f"Logged detailed network stats to InfluxDB with mitigation effectiveness metrics")
+        logger.info(f"Mitigation effectiveness: {effectiveness}")
     except Exception as e:
-        logger.error(f"Failed to log 'after_mitigation' network stats: {e}")
+        logger.error(f"Failed to log network stats: {e}")
 
 
 @app.route('/execute', methods=['POST'])
