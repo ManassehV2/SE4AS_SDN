@@ -258,6 +258,22 @@ The Grafana dashboard is organized into three main views for comprehensive monit
    docker logs se4as_execute | grep "Logged network stats"
    ```
 
+4. **Open vSwitch Kernel Module Error on Windows**
+
+   The following error while running Docker on Windows (Check logs for mininet service in Docker):
+
+   ```
+   Generic Netlink family 'ovs_datapath' does not exist. The Open vSwitch kernel module is probably not loaded.
+   ```
+
+   #### ❌ Why This Happens on Windows?
+   Unlike Linux, Windows does not allow loading Linux kernel modules (such as Open vSwitch). This is because Open vSwitch depends on netlink and kernel modules, which do not exist in Windows or WSL2's lightweight VM.
+
+   #### ✅ Solution:
+   To run Open vSwitch on Windows, you must use a full Linux virtual machine (VM).
+
+   ### How to install Mininet on a VM
+
 ## Configuration
 
 ### Environment Variables
@@ -281,38 +297,6 @@ services:
     mem_limit: 256M
   execute:
     mem_limit: 256M
-```
-
-## Project Structure
-```
-SE4AS_SDN/
-├── monitor/
-│   ├── app/
-│   │   ├── flow_monitor.py    # Flow statistics collection
-│   │   └── simple_controller.py
-│   └── Dockerfile
-├── analyze/
-│   ├── app/
-│   │   └── analyze.py         # Traffic classification
-│   └── Dockerfile
-├── plan/
-│   ├── app/
-│   │   └── plan.py           # Mitigation planning
-│   └── Dockerfile
-├── execute/
-│   ├── app/
-│   │   └── execute.py        # Action implementation
-│   └── Dockerfile
-├── docker-compose.yml        # Service orchestration
-└── README.md
-```
-
-## Networks
-All services communicate through the `se4as_network` Docker network:
-```yaml
-networks:
-  se4as_network:
-    driver: bridge
 ```
 
 ## Contributing
