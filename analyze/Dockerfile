@@ -8,7 +8,7 @@ WORKDIR /app
 COPY app/ /app/
 
 # Install required packages
-RUN pip install flask requests pandas scikit-learn joblib
+RUN pip install flask requests pandas scikit-learn joblib influxdb-client
 
 # Run the application
 CMD ["python", "analyze.py"]
