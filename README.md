@@ -303,7 +303,6 @@ SE4AS_SDN/
 │   ├── app/
 │   │   └── execute.py        # Action implementation
 │   └── Dockerfile
-├── influxdb-config/          # InfluxDB configuration
 ├── docker-compose.yml        # Service orchestration
 └── README.md
 ```
